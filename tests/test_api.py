@@ -77,7 +77,9 @@ async def test_redirect_301(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_redirect_records_click_in_background(client: AsyncClient) -> None:
+    from app.cache.click_counter import flush_to_postgres
     from app.db.session import AsyncSessionLocal
+    from app.main import app
 
     cr = await client.post(
         "/api/v1/shorten",
@@ -90,6 +92,10 @@ async def test_redirect_records_click_in_background(client: AsyncClient) -> None
         headers={"User-Agent": "pytest-httpx/1.0", "Referer": "https://from.test/"},
     )
     await asyncio.sleep(0.2)
+
+    r = app.state.redis
+    if r is not None:
+        await flush_to_postgres(r, AsyncSessionLocal)
 
     async with AsyncSessionLocal() as s:
         q = await s.execute(select(URL).where(URL.short_code == code))

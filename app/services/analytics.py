@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Date, case, cast, func, select, update
+from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.click import Click
@@ -53,10 +53,6 @@ async def record_click(
             city=city,
             device_type=device,
         )
-    )
-    t = URL.__table__
-    await session.execute(
-        update(t).where(t.c.id == url_id).values(click_count=t.c.click_count + 1)
     )
 
 

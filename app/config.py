@@ -23,6 +23,20 @@ class Settings(BaseSettings):
         default="http://localhost:8000",
         description="Origin used to build short_url in API responses",
     )
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis URL for cache, rate limits, click counters",
+    )
+    rate_limit_redirect_per_minute: int = Field(
+        default=100,
+        ge=1,
+        description="Sliding window limit per IP for GET /{code} redirects",
+    )
+    rate_limit_shorten_per_minute: int = Field(
+        default=30,
+        ge=1,
+        description="Sliding window limit per API key (or anon IP) for POST /shorten",
+    )
 
 
 @lru_cache
