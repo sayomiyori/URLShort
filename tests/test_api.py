@@ -121,9 +121,11 @@ async def test_stats(client: AsyncClient) -> None:
     body = sr.json()
     assert body["total_clicks"] == 3
     assert body["original_url"] == "https://stats.test/"
-    assert isinstance(body["clicks_by_day"], list)
+    assert len(body["clicks_by_day"]) == 30
     assert isinstance(body["top_referers"], list)
-    assert isinstance(body["top_devices"], list)
+    assert isinstance(body["top_countries"], list)
+    db = body["device_breakdown"]
+    assert db["mobile"] + db["desktop"] + db["tablet"] + db["bot"] == 3
 
 
 @pytest.mark.asyncio

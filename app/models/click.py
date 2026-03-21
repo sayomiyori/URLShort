@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -33,4 +33,16 @@ class Click(Base):
 
     __table_args__ = (
         Index("ix_click_url_id_clicked_at", "url_id", "clicked_at"),
+        Index(
+            "ix_click_url_country_partial",
+            "url_id",
+            "country",
+            postgresql_where=text("country IS NOT NULL"),
+        ),
+        Index(
+            "ix_click_url_referer_partial",
+            "url_id",
+            "referer",
+            postgresql_where=text("referer IS NOT NULL"),
+        ),
     )

@@ -13,6 +13,8 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "redis>=5.2.0",
     "prometheus-client>=0.21.0",
+    "geoip2>=4.8.0",
+    "user-agents>=2.2.0",
 ]
 
 [project.optional-dependencies]

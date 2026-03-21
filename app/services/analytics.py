@@ -1,23 +1,31 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from user_agents import parse as ua_parse
 
 from app.models.click import Click
 from app.models.url import URL
-from app.schemas.stats import DayCount, NamedCount, StatsResponse
+from app.schemas.stats import (
+    CountryStat,
+    DayStat,
+    DeviceBreakdown,
+    RefererStat,
+    StatsResponse,
+)
+from app.services.geo_lookup import lookup_geo
 
 
-def infer_device_type(user_agent: str) -> str:
-    ua = (user_agent or "").lower()
-    if "tablet" in ua or "ipad" in ua:
-        return "tablet"
-    if "mobile" in ua or "iphone" in ua or ("android" in ua and "mobile" in ua):
-        return "mobile"
-    if "bot" in ua or "crawler" in ua or "spider" in ua:
+def device_type_from_user_agent(user_agent: str) -> str:
+    ua = ua_parse(user_agent or "")
+    if ua.is_bot:
         return "bot"
+    if ua.is_tablet:
+        return "tablet"
+    if ua.is_mobile:
+        return "mobile"
     return "desktop"
 
 
@@ -42,7 +50,10 @@ async def record_click(
     country: str | None = None,
     city: str | None = None,
 ) -> None:
-    device = infer_device_type(user_agent)
+    g_country, g_city = lookup_geo(ip_address)
+    country = country if country is not None else g_country
+    city = city if city is not None else g_city
+    device = device_type_from_user_agent(user_agent)
     session.add(
         Click(
             url_id=url_id,
@@ -67,32 +78,42 @@ async def get_stats(session: AsyncSession, code: str) -> StatsResponse | None:
     )
     total = int(total_r.scalar_one() or 0)
 
+    now = datetime.now(timezone.utc)
+    end_d = now.date()
+    start_d = end_d - timedelta(days=29)
+    start_ts = datetime.combine(start_d, time.min, tzinfo=timezone.utc)
+
     day_col = cast(func.timezone("UTC", Click.clicked_at), Date)
     day_stmt = (
-        select(
-            day_col.label("d"),
-            func.count().label("c"),
+        select(day_col.label("d"), func.count().label("c"))
+        .where(
+            Click.url_id == url_row.id,
+            Click.clicked_at >= start_ts,
         )
-        .where(Click.url_id == url_row.id)
         .group_by(day_col)
-        .order_by(day_col)
     )
     day_rows = (await session.execute(day_stmt)).all()
-    clicks_by_day = [DayCount(day=row.d, count=int(row.c)) for row in day_rows]
+    counts_by_day = {row.d: int(row.c) for row in day_rows}
+    clicks_by_day: list[DayStat] = []
+    for i in range(30):
+        d = start_d + timedelta(days=i)
+        clicks_by_day.append(DayStat(date=d, count=counts_by_day.get(d, 0)))
 
     ref_label = case((Click.referer.is_(None), "(none)"), else_=Click.referer)
     ref_stmt = (
-        select(ref_label.label("name"), func.count().label("c"))
+        select(ref_label.label("ref"), func.count().label("c"))
         .where(Click.url_id == url_row.id)
         .group_by(ref_label)
         .order_by(func.count().desc())
         .limit(10)
     )
     ref_rows = (await session.execute(ref_stmt)).all()
-    top_referers = [NamedCount(name=str(row.name), count=int(row.c)) for row in ref_rows]
+    top_referers = [
+        RefererStat(referer=str(row.ref), count=int(row.c)) for row in ref_rows
+    ]
 
     country_stmt = (
-        select(Click.country.label("name"), func.count().label("c"))
+        select(Click.country.label("c"), func.count().label("n"))
         .where(Click.url_id == url_row.id, Click.country.is_not(None))
         .group_by(Click.country)
         .order_by(func.count().desc())
@@ -100,18 +121,21 @@ async def get_stats(session: AsyncSession, code: str) -> StatsResponse | None:
     )
     country_rows = (await session.execute(country_stmt)).all()
     top_countries = [
-        NamedCount(name=str(row.name), count=int(row.c)) for row in country_rows
+        CountryStat(country=str(row.c), count=int(row.n)) for row in country_rows
     ]
 
     dev_stmt = (
-        select(Click.device_type.label("name"), func.count().label("c"))
+        select(Click.device_type.label("dt"), func.count().label("n"))
         .where(Click.url_id == url_row.id)
         .group_by(Click.device_type)
-        .order_by(func.count().desc())
-        .limit(10)
     )
     dev_rows = (await session.execute(dev_stmt)).all()
-    top_devices = [NamedCount(name=str(row.name), count=int(row.c)) for row in dev_rows]
+    parts = {k: 0 for k in ("mobile", "desktop", "tablet", "bot")}
+    for row in dev_rows:
+        k = str(row.dt)
+        if k in parts:
+            parts[k] = int(row.n)
+    breakdown = DeviceBreakdown(**parts)
 
     created = url_row.created_at
     if created.tzinfo is None:
@@ -122,7 +146,7 @@ async def get_stats(session: AsyncSession, code: str) -> StatsResponse | None:
         clicks_by_day=clicks_by_day,
         top_referers=top_referers,
         top_countries=top_countries,
-        top_devices=top_devices,
+        device_breakdown=breakdown,
         created_at=created,
         original_url=url_row.original_url,
     )

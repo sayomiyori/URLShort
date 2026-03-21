@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         ge=1,
         description="Sliding window limit per API key (or anon IP) for POST /shorten",
     )
+    maxmind_city_db_path: str | None = Field(
+        default="/usr/share/GeoIP/GeoLite2-City.mmdb",
+        description="Path to GeoLite2-City.mmdb; if file missing, geo fields stay null",
+    )
 
 
 @lru_cache
