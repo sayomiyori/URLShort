@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: urlshort
+          POSTGRES_PASSWORD: urlshort
+          POSTGRES_DB: urlshort
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U urlshort -d urlshort"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://urlshort:urlshort@localhost:5432/urlshort
+      REDIS_URL: redis://localhost:6379/15
+      PUBLIC_BASE_URL: http://testserver
+      MAXMIND_CITY_DB_PATH: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short

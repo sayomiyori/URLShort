@@ -1,6 +1,21 @@
 # URLShort
 
+[![CI](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml)
+
 Высоконагруженный сокращатель ссылок на **FastAPI**, **PostgreSQL**, **Redis**, **Nginx**, метриками **Prometheus** и дашбордом **Grafana**.
+
+## Проект 2 — чеклист завершения
+
+| Требование | Статус | Где в коде / примечание |
+|------------|--------|-------------------------|
+| **Core API:** shorten, redirect, stats | готово | `POST /api/v1/shorten`, `GET /{code}`, `GET /api/v1/stats/{code}` |
+| **Redis:** кеш, rate limit, атомарные счётчики | готово | `app/cache/url_cache.py`, `app/middleware/rate_limit.py`, `app/cache/click_counter.py`; кеш с **TTL 1h**, не классический LRU |
+| **GeoIP + device parsing** | готово | `app/services/geo_lookup.py` (GeoLite2), `user-agents` в `app/services/analytics.py` |
+| **Nginx:** reverse proxy + microcaching | готово | `nginx/nginx.conf`, сервис в `docker-compose.yml` |
+| **Prometheus + Grafana** | готово | `app/metrics.py`, `GET /metrics`, `prometheus/`, `grafana/dashboards/urlshort.json` |
+| **Locust + результаты** | частично | `locustfile.py` есть; **цифры** — после прогона в таблицу [Performance](#performance-и-графики) |
+| **README: цифры + скриншоты** | частично | Таблица и Mermaid-шаблоны есть; **реальные числа и PNG** — вручную после нагрузки, см. [`docs/images/README.md`](docs/images/README.md) |
+| **CI: зелёный pipeline** | готово | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — pytest на **PostgreSQL + Redis** (service containers) |
 
 ## Быстрый старт (Docker)
 
