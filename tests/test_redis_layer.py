@@ -5,6 +5,16 @@ import asyncio
 import pytest
 from httpx import AsyncClient
 from prometheus_client import REGISTRY
+
+
+def _cache_ops_total(result: str) -> float:
+    for fam in REGISTRY.collect():
+        if fam.name != "cache_operations":
+            continue
+        for s in fam.samples:
+            if s.name == "cache_operations_total" and s.labels.get("result") == result:
+                return float(s.value)
+    return 0.0
 from sqlalchemy import select
 
 from app.cache import click_counter, url_cache
@@ -13,20 +23,10 @@ from app.main import app
 from app.models.url import URL
 
 
-def _counter_value(metric_base_name: str) -> float:
-    for metric in REGISTRY.collect():
-        if metric.name != metric_base_name:
-            continue
-        for s in metric.samples:
-            if s.name == f"{metric_base_name}_total":
-                return float(s.value)
-    return 0.0
-
-
 @pytest.mark.asyncio
 async def test_url_cache_miss_then_hit(client: AsyncClient) -> None:
-    hits0 = _counter_value("urlshort_url_cache_hit")
-    miss0 = _counter_value("urlshort_url_cache_miss")
+    hits0 = _cache_ops_total("hit")
+    miss0 = _cache_ops_total("miss")
 
     cr = await client.post(
         "/api/v1/shorten",
@@ -37,12 +37,12 @@ async def test_url_cache_miss_then_hit(client: AsyncClient) -> None:
 
     r1 = await client.get(f"/{code}", follow_redirects=False)
     assert r1.status_code == 301
-    miss1 = _counter_value("urlshort_url_cache_miss")
+    miss1 = _cache_ops_total("miss")
     assert miss1 == miss0 + 1
 
     r2 = await client.get(f"/{code}", follow_redirects=False)
     assert r2.status_code == 301
-    hits2 = _counter_value("urlshort_url_cache_hit")
+    hits2 = _cache_ops_total("hit")
     assert hits2 == hits0 + 1
 
 

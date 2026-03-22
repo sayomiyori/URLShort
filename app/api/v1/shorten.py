@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import metrics as prom_metrics
 from app.cache import url_cache
 from app.db.session import get_db
 from app.schemas.url import ShortenRequest, ShortenResponse
@@ -25,6 +26,7 @@ async def shorten(
         )
         rredis = getattr(request.app.state, "redis", None)
         background_tasks.add_task(url_cache.invalidate, rredis, resp.code)
+        prom_metrics.short_url_created_total.inc()
         return resp
     except ValueError as e:
         if str(e) == "alias_taken":

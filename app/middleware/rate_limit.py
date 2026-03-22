@@ -11,6 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app import metrics as prom_metrics
 from app.config import get_settings
 
 if TYPE_CHECKING:
@@ -72,6 +73,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         results = await pipe.execute()
         current = int(results[1])
         if current >= limit:
+            prom_metrics.rate_limit_rejected_total.inc()
             oldest = await redis.zrange(bucket, 0, 0, withscores=True)
             retry_after = 1
             if oldest:

@@ -7,19 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from prometheus_client import Counter
-
 if TYPE_CHECKING:
     from redis.asyncio import Redis
-
-CACHE_HIT = Counter(
-    "urlshort_url_cache_hit",
-    "Redirect resolved from Redis URL cache",
-)
-CACHE_MISS = Counter(
-    "urlshort_url_cache_miss",
-    "Redirect required PostgreSQL lookup",
-)
 
 URL_KEY_PREFIX = "url:"
 URL_CACHE_TTL_SECONDS = 3600
