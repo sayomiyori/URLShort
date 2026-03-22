@@ -2,142 +2,187 @@
 
 [![CI](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml)
 
-Высоконагруженный сокращатель ссылок на **FastAPI**, **PostgreSQL**, **Redis**, **Nginx**, метриками **Prometheus** и дашбордом **Grafana**.
+Высоконагруженный сокращатель ссылок на **FastAPI + PostgreSQL + Redis** с GeoIP-аналитикой, Nginx-кешированием, метриками Prometheus и дашбордом Grafana.
 
-## чеклист завершения
+## Проект 2 — чеклист завершения
 
-| Требование | Статус | Где в коде / примечание |
-|------------|--------|-------------------------|
-| **Core API:** shorten, redirect, stats | готово | `POST /api/v1/shorten`, `GET /{code}`, `GET /api/v1/stats/{code}` |
-| **Redis:** кеш, rate limit, атомарные счётчики | готово | `app/cache/url_cache.py`, `app/middleware/rate_limit.py`, `app/cache/click_counter.py`; кеш с **TTL 1h**, не классический LRU |
-| **GeoIP + device parsing** | готово | `app/services/geo_lookup.py` (GeoLite2), `user-agents` в `app/services/analytics.py` |
-| **Nginx:** reverse proxy + microcaching | готово | `nginx/nginx.conf`, сервис в `docker-compose.yml` |
-| **Prometheus + Grafana** | готово | `app/metrics.py`, `GET /metrics`, `prometheus/`, `grafana/dashboards/urlshort.json` |
-| **Locust + результаты** | частично | `locustfile.py` есть; **цифры** — после прогона в таблицу [Performance](#performance-и-графики) |
-| **README: цифры + скриншоты** | частично | Таблица и Mermaid-шаблоны есть; **реальные числа и PNG** — вручную после нагрузки, см. [`docs/images/README.md`](docs/images/README.md) |
-| **CI: зелёный pipeline** | готово | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — pytest на **PostgreSQL + Redis** (service containers) |
+В репозитории: Core API (`/shorten`, `/{code}`, `/stats`), Redis (кеш URL с TTL, rate limit, счётчики кликов), GeoIP + разбор UA, Nginx (reverse proxy, `proxy_cache` для 301 на 10m), Prometheus/Grafana, Locust, CI в [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Таблицу **Performance** ниже и скриншоты в `docs/images/` заполните после нагрузочного прогона.
 
-## Быстрый старт (Docker)
+## Стек
+
+| Компонент | Технология |
+|-----------|-----------|
+| API | FastAPI (asyncio) |
+| База данных | PostgreSQL 16, SQLAlchemy 2 (asyncpg) |
+| Кеш / Rate-limit / Счётчики | Redis 7 (ZSET sliding window, INCR+Lua flush) |
+| GeoIP | MaxMind GeoLite2-City (опционально) |
+| Парсинг User-Agent | `user-agents` |
+| Reverse proxy | Nginx 1.27 (micro-caching редиректов 301, 10m) |
+| Метрики | Prometheus + Grafana |
+| Нагрузочные тесты | Locust |
+
+## Быстрый старт
 
 ```bash
+# Только API + зависимости
 docker compose up -d postgres redis app
-# опционально: MAXMIND_LICENSE_KEY для GeoLite2 при сборке app
+
+# Полный стек (+ Nginx :8080, Prometheus :9090, Grafana :3000)
+docker compose up -d
 ```
 
-Приложение: `http://localhost:8000`  
-Стек observability: `docker compose up -d` (включает **Prometheus** `:9090`, **Grafana** `:3000`, опционально **Nginx** `:8080`).
+> **GeoLite2** — при сборке образа передайте `MAXMIND_LICENSE_KEY`:
+> ```bash
+> MAXMIND_LICENSE_KEY=your_key docker compose build app
+> docker compose up -d
+> ```
+> Без ключа приложение работает без геолокации (поля `country`/`city` = null).
 
-- Grafana: логин `admin` / пароль `admin`  
-- Дашборд **URLShort** подключается автоматически (provisioning).
+**Grafana**: `http://localhost:3000` — логин `admin` / пароль `admin`. Дашборд **URLShort** подключается автоматически через provisioning.
+
+## API
+
+### `POST /api/v1/shorten`
+
+Создать короткую ссылку.
+
+```json
+// Запрос
+{
+  "url": "https://example.com/very/long/path",
+  "custom_alias": "my-link",   // опционально, 3–20 символов [a-zA-Z0-9_-]
+  "ttl_hours": 24              // опционально, TTL в часах
+}
+
+// Ответ 200
+{
+  "short_url": "http://localhost:8000/my-link",
+  "code": "my-link",
+  "expires_at": "2025-03-22T12:00:00+00:00"
+}
+```
+
+| Статус | Причина |
+|--------|---------|
+| 200 | Успешно создано |
+| 409 | `custom_alias` уже занят |
+| 422 | Невалидный alias или URL |
+
+---
+
+### `GET /{code}`
+
+Редирект на оригинальный URL (301). Клик записывается фоново.
+
+| Статус | Причина |
+|--------|---------|
+| 301 | Редирект |
+| 404 | Код не найден или истёк |
+| 429 | Превышен rate limit (заголовок `Retry-After`) |
+
+---
+
+### `GET /api/v1/stats/{code}`
+
+Статистика по короткой ссылке за последние 30 дней.
+
+```json
+{
+  "total_clicks": 1500,
+  "original_url": "https://example.com/very/long/path",
+  "created_at": "2025-03-01T10:00:00+00:00",
+  "clicks_by_day": [
+    {"date": "2025-03-01", "count": 42}, ...
+  ],
+  "top_referers": [
+    {"referer": "https://google.com", "count": 800}, ...
+  ],
+  "top_countries": [
+    {"country": "US", "count": 600}, ...
+  ],
+  "device_breakdown": {
+    "desktop": 900,
+    "mobile": 500,
+    "tablet": 80,
+    "bot": 20
+  }
+}
+```
+
+---
+
+### `GET /metrics`
+
+Prometheus-метрики (стандарт text/plain).
 
 ## Метрики Prometheus
 
-Эндпоинт: `GET /metrics` (также используется [starlette-prometheus](https://github.com/stephenhillier/starlette-prometheus) для HTTP-метрик).
-
-Кастомные серии (имена как в Grafana):
-
 | Метрика | Тип | Описание |
 |--------|-----|----------|
-| `redirects_total` | Counter | `status_code`, `cached` (`true`/`false`) |
+| `redirects_total` | Counter | Редиректы; метки: `status_code`, `cached` |
 | `short_url_created_total` | Counter | Успешные создания коротких ссылок |
-| `redirect_duration_seconds` | Histogram | Время обработки редиректа (бакеты до 250 ms) |
-| `cache_operations_total` | Counter | `result` = `hit` / `miss` |
-| `cache_hit_ratio` | Gauge | Обновляется ~каждые 10 с |
-| `rate_limit_rejected_total` | Counter | Ответы 429 от лимитера |
-| `active_urls_total` | Gauge | Число активных URL в БД |
+| `redirect_duration_seconds` | Histogram | Время обработки `GET /{code}` (бакеты до 250 ms) |
+| `cache_operations_total` | Counter | Redis URL-кеш; метка: `result` = `hit`/`miss` |
+| `cache_hit_ratio` | Gauge | Отношение hit/(hit+miss), обновляется каждые 10 с |
+| `rate_limit_rejected_total` | Counter | Ответы 429 от rate-limiter |
+| `active_urls_total` | Gauge | Число активных URL в БД, обновляется каждые 10 с |
 
-## Чеклист: Locust, Prometheus, Grafana
+## Архитектура Redis
 
-| Пункт | Статус | Где в репозитории |
-|--------|--------|-------------------|
-| **Locust-сценарии** | готово | [`locustfile.py`](locustfile.py) — веса 1 / 8 / 2 / 1 |
-| **Prometheus-метрики** | готово | [`app/metrics.py`](app/metrics.py), `GET /metrics`, [`prometheus/prometheus.yml`](prometheus/prometheus.yml) |
-| **Grafana дашборд** | готово | [`grafana/dashboards/urlshort.json`](grafana/dashboards/urlshort.json), provisioning в [`grafana/provisioning/`](grafana/provisioning/) |
-| **Результаты в README с графиками** | таблица + шаблоны ниже; числа и PNG — после вашего прогона | раздел [Performance и графики](#performance-и-графики) |
+| Ключ | Тип | Назначение |
+|------|-----|------------|
+| `url:{code}` | String (JSON) | Кеш URL-записи, TTL 1 ч |
+| `clicks:{code}` | String (int) | Атомарный счётчик кликов; сбрасывается в PG каждые 60 с и при завершении |
+| `rl:redirect:{ip}` | ZSET | Sliding-window rate limit редиректов (100 req/min) |
+| `rl:shorten:{key/ip}` | ZSET | Sliding-window rate limit создания ссылок (30 req/min) |
 
-Цепочка нагрузки: **Locust** → HTTP → **app** → **GET /metrics** → **Prometheus** (scrape) → **Grafana** (дашборд **URLShort**, `uid=urlshort`).
+## Запуск тестов
+
+```bash
+# Поднять PostgreSQL и Redis
+docker compose up -d postgres redis
+
+# Установить dev-зависимости
+pip install -e ".[dev]"
+
+# Прогнать тесты
+pytest -v
+```
 
 ## Нагрузочное тестирование (Locust)
 
-Установка (dev-зависимости):
-
 ```bash
-pip install -e ".[dev]"
-```
-
-Поднимите стек (хотя бы `app`, `postgres`, `redis`; для метрик в Grafana — ещё `prometheus` и `grafana`):
-
-```bash
+# Поднять полный стек
 docker compose up -d postgres redis app prometheus grafana
-```
 
-Запуск Locust (хост и порт как у вашего API):
-
-```bash
+# Запустить Locust
 locust -f locustfile.py --host=http://localhost:8000 --users=500 --spawn-rate=50
 ```
 
-Веб-UI Locust: `http://localhost:8089` (параметры можно задать и там).
+Веб-интерфейс Locust: `http://localhost:8089`
 
-### Сценарии (`locustfile.py`)
+### Сценарии
 
-| Сценарий | Запрос | Вес |
-|----------|--------|-----|
-| **CreateURL** | `POST /api/v1/shorten` со случайным URL | 1 |
-| **RedirectHot** | `GET /{code}` — код из пула до 10 «горячих» на пользователя | 8 |
-| **RedirectCold** | `GET /{code}` — случайный известный код или случайная строка | 2 |
-| **GetStats** | `GET /api/v1/stats/{code}` | 1 |
+| Задача | Запрос | Вес |
+|--------|--------|-----|
+| CreateURL | `POST /api/v1/shorten` | 1 |
+| RedirectHot | `GET /{code}` — «горячие» коды (до 10 на пользователя) | 8 |
+| RedirectCold | `GET /{code}` — случайный или несуществующий код | 2 |
+| GetStats | `GET /api/v1/stats/{code}` | 1 |
 
-## Performance и графики
+## Performance
 
-### Таблица результатов (заполните после прогона)
+Заполните после прогона Locust:
 
-Снимите значения из **Grafana** (панели дашборда) или **Prometheus** (Explore), после стабилизации нагрузки.
+| Метрика | Значение |
+|---------|----------|
+| RPS (redirect) | — |
+| Latency p50 | — ms |
+| Latency p95 | — ms |
+| Latency p99 | — ms |
+| Cache hit ratio | — % |
 
-| Metric | Value |
-|--------|-------|
-| RPS (redirect) | _замените_ |
-| Latency p50 | _замените_ ms |
-| Latency p95 | _замените_ ms |
-| Latency p99 | _замените_ ms |
-| Cache hit ratio | _замените_ % |
-
-### Примерные кривые (Mermaid)
-
-Ниже — **иллюстрация формата** отчёта; подставьте свои числа или замените блоки скриншотами из Grafana.
-
-```mermaid
----
-config:
-  themeVariables:
-    xyChart:
-      titleColor: "#ccc"
----
-xychart-beta
-    title "Пример: RPS редиректов (не фактический прогон)"
-    x-axis [1m, 2m, 3m, 4m, 5m]
-    y-axis "req/s" 0 --> 8000
-    line [1200, 4100, 6500, 7200, 6900]
-```
-
-```mermaid
----
-config:
-  themeVariables:
-    xyChart:
-      titleColor: "#ccc"
----
-xychart-beta
-    title "Пример: задержка p50 / p95 (мс)"
-    x-axis [1m, 2m, 3m, 4m, 5m]
-    y-axis "ms" 0 --> 50
-    line [8, 12, 15, 14, 13]
-    line [22, 28, 35, 32, 30]
-```
-
-### Скриншоты Grafana (рекомендуемые файлы)
-
-Положите PNG в [`docs/images/`](docs/images/) — см. [`docs/images/README.md`](docs/images/README.md). После этого раскомментируйте строки ниже (или добавьте свои).
+Скриншоты Grafana положите в [`docs/images/`](docs/images/) и раскомментируйте:
 
 <!--
 ![Redirect RPS](docs/images/grafana-rps.png)
@@ -145,11 +190,8 @@ xychart-beta
 ![Cache hit ratio](docs/images/grafana-cache-ratio.png)
 ![Rate limit / min](docs/images/grafana-rate-limit.png)
 ![Active URLs](docs/images/grafana-active-urls.png)
-![Обзор дашборда](docs/images/grafana-overview.png)
 -->
-
-**Проверка перед скриншотами:** в Prometheus **Status → Targets** job `urlshort` в состоянии **UP**; в Grafana откройте дашборд **URLShort** — панели должны обновляться во время Locust.
 
 ## Лицензия GeoLite2
 
-Для геолокации нужен файл **GeoLite2-City.mmdb**. При сборке Docker-образа можно передать `MAXMIND_LICENSE_KEY` (см. `Dockerfile`), либо смонтировать готовый `.mmdb` в путь из `MAXMIND_CITY_DB_PATH`.
+База **GeoLite2-City.mmdb** распространяется MaxMind по [отдельной лицензии](https://www.maxmind.com/en/geolite2/eula). Передайте `MAXMIND_LICENSE_KEY` при сборке Docker-образа или смонтируйте готовый файл через `MAXMIND_CITY_DB_PATH`.

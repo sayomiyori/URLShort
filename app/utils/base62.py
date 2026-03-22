@@ -2,6 +2,7 @@
 
 ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 BASE = len(ALPHABET)
+_CHAR_TO_IDX: dict[str, int] = {ch: i for i, ch in enumerate(ALPHABET)}
 
 
 def encode(n: int) -> str:
@@ -10,9 +11,8 @@ def encode(n: int) -> str:
     if n == 0:
         return ALPHABET[0]
     out: list[str] = []
-    x = n
-    while x:
-        x, r = divmod(x, BASE)
+    while n:
+        n, r = divmod(n, BASE)
         out.append(ALPHABET[r])
     return "".join(reversed(out))
 
@@ -22,7 +22,7 @@ def decode(s: str) -> int:
         raise ValueError("empty string")
     n = 0
     for ch in s:
-        idx = ALPHABET.find(ch)
+        idx = _CHAR_TO_IDX.get(ch, -1)
         if idx < 0:
             raise ValueError(f"invalid base62 character: {ch!r}")
         n = n * BASE + idx

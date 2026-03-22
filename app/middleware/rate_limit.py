@@ -70,11 +70,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         pipe = redis.pipeline(transaction=True)
         pipe.zremrangebyscore(bucket, 0, now - window)
         pipe.zcard(bucket)
+        pipe.zrange(bucket, 0, 0, withscores=True)  # fetch oldest in same round trip
         results = await pipe.execute()
         current = int(results[1])
         if current >= limit:
             prom_metrics.rate_limit_rejected_total.inc()
-            oldest = await redis.zrange(bucket, 0, 0, withscores=True)
+            oldest = results[2]
             retry_after = 1
             if oldest:
                 retry_after = max(
@@ -87,7 +88,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": str(retry_after)},
             )
 
-        await redis.zadd(bucket, {member: now})
-        await redis.expire(bucket, int(window) + 5)
+        # Not rejected: add member and refresh expiry in a single pipeline
+        pipe2 = redis.pipeline()
+        pipe2.zadd(bucket, {member: now})
+        pipe2.expire(bucket, int(window) + 5)
+        await pipe2.execute()
 
         return await call_next(request)

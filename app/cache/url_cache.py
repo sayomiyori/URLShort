@@ -53,9 +53,8 @@ def _deserialize(raw: str) -> CachedUrl | None:
     try:
         d = json.loads(raw)
         exp = d.get("expires_at")
-        expires_at = (
-            datetime.fromisoformat(exp.replace("Z", "+00:00")) if exp else None
-        )
+        # Python 3.11+ fromisoformat handles 'Z' suffix natively
+        expires_at = datetime.fromisoformat(exp) if exp else None
         return CachedUrl(
             original_url=d["original_url"],
             is_active=bool(d["is_active"]),
@@ -69,11 +68,10 @@ def _deserialize(raw: str) -> CachedUrl | None:
 async def get_cached(redis: Redis | None, short_code: str) -> CachedUrl | None:
     if redis is None:
         return None
-    raw = await redis.get(_key(short_code))
+    # Redis client is configured with decode_responses=True, so raw is always str
+    raw: str | None = await redis.get(_key(short_code))
     if raw is None:
         return None
-    if isinstance(raw, bytes):
-        raw = raw.decode()
     return _deserialize(raw)
 
 

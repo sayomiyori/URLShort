@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import update
+from sqlalchemy import update  # used both at module level and in fallback
 
 from app.models.url import URL
 
@@ -39,8 +39,6 @@ async def increment(redis: Redis | None, short_code: str) -> None:
 
 async def increment_pg_when_no_redis(url_id: int) -> None:
     """Fallback when Redis is down: bump url.click_count in PostgreSQL."""
-    from sqlalchemy import update
-
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as session:

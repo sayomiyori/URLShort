@@ -47,12 +47,8 @@ async def record_click(
     ip_address: str,
     user_agent: str,
     referer: str | None,
-    country: str | None = None,
-    city: str | None = None,
 ) -> None:
-    g_country, g_city = lookup_geo(ip_address)
-    country = country if country is not None else g_country
-    city = city if city is not None else g_city
+    country, city = lookup_geo(ip_address)
     device = device_type_from_user_agent(user_agent)
     session.add(
         Click(

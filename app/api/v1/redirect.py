@@ -55,7 +55,7 @@ async def redirect_by_code(
             await url_cache.invalidate(rredis, code)
             cached = None
 
-        if cached is not None and cached.is_valid_now():
+        if cached is not None:
             prom_metrics.record_cache_operation("hit")
             cached_str = "true"
             original_url = cached.original_url
