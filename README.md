@@ -4,10 +4,6 @@
 
 Высоконагруженный сокращатель ссылок на **FastAPI + PostgreSQL + Redis** с GeoIP-аналитикой, Nginx-кешированием, метриками Prometheus и дашбордом Grafana.
 
-## Проект 2 — чеклист завершения
-
-В репозитории: Core API (`/shorten`, `/{code}`, `/stats`), Redis (кеш URL с TTL, rate limit, счётчики кликов), GeoIP + разбор UA, Nginx (reverse proxy, `proxy_cache` для 301 на 10m), Prometheus/Grafana, Locust, CI в [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Таблицу **Performance** ниже и скриншоты в `docs/images/` заполните после нагрузочного прогона.
-
 ## Стек
 
 | Компонент | Технология |
