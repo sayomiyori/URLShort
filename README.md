@@ -6,56 +6,114 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](#)
 [![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)](#)
 [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](#)
+[![Nginx](https://img.shields.io/badge/Nginx-009639?logo=nginx&logoColor=white)](#)
+[![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?logo=prometheus&logoColor=white)](#)
 
-Высоконагруженный сокращатель ссылок на **FastAPI + PostgreSQL + Redis** с GeoIP-аналитикой, Nginx-кешированием, метриками Prometheus и дашбордом Grafana.
+High-performance URL shortener built with **FastAPI + PostgreSQL + Redis** — GeoIP analytics, Nginx microcaching, Prometheus metrics, Grafana dashboard, and Locust load testing.
 
-## Стек
+## Architecture
 
-| Компонент | Технология |
+```
+┌──────────┐     ┌──────────────────┐     ┌──────────────────┐     ┌────────────┐
+│ Client   │────▶│ Nginx            │────▶│ FastAPI          │────▶│ PostgreSQL │
+└──────────┘     │ microcache 301s  │     │ /shorten (POST)  │     │ urls       │
+                 │ rate limit L1    │     │ /{code}  (GET)   │     │ clicks     │
+                 └──────────────────┘     │ /stats   (GET)   │     └────────────┘
+                                          └────────┬─────────┘
+                                                   │
+                                          ┌────────▼─────────┐
+                                          │ Redis            │
+                                          │ url:{code}  LRU  │
+                                          │ clicks:{code} +1 │
+                                          │ rl:*    ZSET     │
+                                          └──────────────────┘
+```
+
+## Screenshots
+
+### Grafana Dashboard
+![Grafana Dashboard](docs/images/grafana-dashboard.png)
+
+### Locust Load Test (500 concurrent users)
+![Locust Results](docs/images/locust-results.png)
+
+### Swagger UI
+![Swagger UI — Shorten](docs/images/swagger-ui-1.png)
+![Swagger UI — Stats](docs/images/swagger-ui-2.png)
+![Swagger UI — Redirect](docs/images/swagger-ui-3.png)
+
+## Performance
+
+Tested with Locust — 500 concurrent users, 4 scenarios (create / redirect hot / redirect cold / stats):
+
+| Metric            | Value       |
+|-------------------|-------------|
+| RPS (aggregated)  | ~180 req/s  |
+| Latency p50       | 4 ms        |
+| Latency p95       | 14 ms       |
+| Latency p99       | 65 ms       |
+| Failures          | 0%          |
+| Concurrent users  | 500         |
+
+> Single FastAPI instance in Docker on a local machine. Nginx microcaching disabled for benchmarking purity.
+
+## Tech Stack
+
+| Component | Technology |
 |-----------|-----------|
 | API | FastAPI (asyncio) |
-| База данных | PostgreSQL 16, SQLAlchemy 2 (asyncpg) |
-| Кеш / Rate-limit / Счётчики | Redis 7 (ZSET sliding window, INCR+Lua flush) |
-| GeoIP | MaxMind GeoLite2-City (опционально) |
-| Парсинг User-Agent | `user-agents` |
-| Reverse proxy | Nginx 1.27 (micro-caching редиректов 301, 10m) |
-| Метрики | Prometheus + Grafana |
-| Нагрузочные тесты | Locust |
+| Database | PostgreSQL 16, SQLAlchemy 2 (asyncpg) |
+| Cache / Rate-limit / Counters | Redis 7 (ZSET sliding window, INCR + Lua flush) |
+| GeoIP | MaxMind GeoLite2-City (optional) |
+| User-Agent parsing | `user-agents` |
+| Reverse proxy | Nginx 1.27 (microcaching 301 redirects, 10m) |
+| Metrics | Prometheus + Grafana |
+| Load testing | Locust |
 
-## Быстрый старт
+## Architecture Decisions
+
+**Redis sliding window (ZSET) over token bucket** — ZSET gives exact per-second precision and survives Redis restart. Token bucket leaks state and requires periodic refill logic.
+
+**Atomic counters + periodic flush over direct DB writes** — `INCR` is O(1) and non-blocking. Flushing every 60s reduces PostgreSQL write load by ~100x under heavy traffic. Counter state is durable in Redis between flushes.
+
+**Nginx microcaching for 301 redirects** — hot URLs are served from Nginx memory without hitting FastAPI at all. `X-Cache-Status` header for debugging. Cache TTL 10 minutes balances freshness vs performance.
+
+**Base62 over UUID** — shorter codes (6 chars vs 36), URL-safe, human-readable. Sequential IDs prevent collisions without retry logic.
+
+## Quick Start
 
 ```bash
-# Только API + зависимости
+# API + dependencies only
 docker compose up -d postgres redis app
 
-# Полный стек (+ Nginx :8080, Prometheus :9090, Grafana :3000)
+# Full stack (+ Nginx :8080, Prometheus :9090, Grafana :3000)
 docker compose up -d
 ```
 
-> **GeoLite2** — при сборке образа передайте `MAXMIND_LICENSE_KEY`:
+> **GeoLite2** — pass `MAXMIND_LICENSE_KEY` at build time:
 > ```bash
 > MAXMIND_LICENSE_KEY=your_key docker compose build app
 > docker compose up -d
 > ```
-> Без ключа приложение работает без геолокации (поля `country`/`city` = null).
+> Without the key, the app works without geolocation (`country`/`city` = null).
 
-**Grafana**: `http://localhost:3000` — логин `admin` / пароль `admin`. Дашборд **URLShort** подключается автоматически через provisioning.
+**Grafana**: `http://localhost:3000` — login `admin` / password `admin`. The **URLShort** dashboard is auto-provisioned.
 
 ## API
 
 ### `POST /api/v1/shorten`
 
-Создать короткую ссылку.
+Create a short URL.
 
 ```json
-// Запрос
+// Request
 {
   "url": "https://example.com/very/long/path",
-  "custom_alias": "my-link",   // опционально, 3–20 символов [a-zA-Z0-9_-]
-  "ttl_hours": 24              // опционально, TTL в часах
+  "custom_alias": "my-link",   // optional, 3–20 chars [a-zA-Z0-9_-]
+  "ttl_hours": 24               // optional, TTL in hours
 }
 
-// Ответ 200
+// Response 200
 {
   "short_url": "http://localhost:8012/my-link",
   "code": "my-link",
@@ -63,29 +121,25 @@ docker compose up -d
 }
 ```
 
-| Статус | Причина |
-|--------|---------|
-| 200 | Успешно создано |
-| 409 | `custom_alias` уже занят |
-| 422 | Невалидный alias или URL |
-
----
+| Status | Reason |
+|--------|--------|
+| 200 | Created |
+| 409 | `custom_alias` already taken |
+| 422 | Invalid alias or URL |
 
 ### `GET /{code}`
 
-Редирект на оригинальный URL (301). Клик записывается фоново.
+Redirect to original URL (301). Click is recorded asynchronously.
 
-| Статус | Причина |
-|--------|---------|
-| 301 | Редирект |
-| 404 | Код не найден или истёк |
-| 429 | Превышен rate limit (заголовок `Retry-After`) |
-
----
+| Status | Reason |
+|--------|--------|
+| 301 | Redirect |
+| 404 | Code not found or expired |
+| 429 | Rate limit exceeded (`Retry-After` header) |
 
 ### `GET /api/v1/stats/{code}`
 
-Статистика по короткой ссылке за последние 30 дней.
+Click statistics for the last 30 days.
 
 ```json
 {
@@ -93,13 +147,13 @@ docker compose up -d
   "original_url": "https://example.com/very/long/path",
   "created_at": "2025-03-01T10:00:00+00:00",
   "clicks_by_day": [
-    {"date": "2025-03-01", "count": 42}, ...
+    {"date": "2025-03-01", "count": 42}
   ],
   "top_referers": [
-    {"referer": "https://google.com", "count": 800}, ...
+    {"referer": "https://google.com", "count": 800}
   ],
   "top_countries": [
-    {"country": "US", "count": 600}, ...
+    {"country": "US", "count": 600}
   ],
   "device_breakdown": {
     "desktop": 900,
@@ -110,89 +164,65 @@ docker compose up -d
 }
 ```
 
----
-
 ### `GET /metrics`
 
-Prometheus-метрики (стандарт text/plain).
+Prometheus metrics (text/plain).
 
-## Метрики Prometheus
+## Prometheus Metrics
 
-| Метрика | Тип | Описание |
-|--------|-----|----------|
-| `redirects_total` | Counter | Редиректы; метки: `status_code`, `cached` |
-| `short_url_created_total` | Counter | Успешные создания коротких ссылок |
-| `redirect_duration_seconds` | Histogram | Время обработки `GET /{code}` (бакеты до 250 ms) |
-| `cache_operations_total` | Counter | Redis URL-кеш; метка: `result` = `hit`/`miss` |
-| `cache_hit_ratio` | Gauge | Отношение hit/(hit+miss), обновляется каждые 10 с |
-| `rate_limit_rejected_total` | Counter | Ответы 429 от rate-limiter |
-| `active_urls_total` | Gauge | Число активных URL в БД, обновляется каждые 10 с |
+| Metric | Type | Description |
+|--------|------|-------------|
+| `redirects_total` | Counter | Redirects; labels: `status_code`, `cached` |
+| `short_url_created_total` | Counter | Successful URL creations |
+| `redirect_duration_seconds` | Histogram | `GET /{code}` latency (buckets up to 250 ms) |
+| `cache_operations_total` | Counter | Redis URL cache; label: `result` = `hit`/`miss` |
+| `cache_hit_ratio` | Gauge | hit/(hit+miss), updated every 10s |
+| `rate_limit_rejected_total` | Counter | 429 responses from rate limiter |
+| `active_urls_total` | Gauge | Active URLs in DB, updated every 10s |
 
-## Архитектура Redis
+## Redis Architecture
 
-| Ключ | Тип | Назначение |
-|------|-----|------------|
-| `url:{code}` | String (JSON) | Кеш URL-записи, TTL 1 ч |
-| `clicks:{code}` | String (int) | Атомарный счётчик кликов; сбрасывается в PG каждые 60 с и при завершении |
-| `rl:redirect:{ip}` | ZSET | Sliding-window rate limit редиректов (100 req/min) |
-| `rl:shorten:{key/ip}` | ZSET | Sliding-window rate limit создания ссылок (30 req/min) |
+| Key | Type | Purpose |
+|-----|------|---------|
+| `url:{code}` | String (JSON) | URL record cache, TTL 1h |
+| `clicks:{code}` | String (int) | Atomic click counter; flushed to PG every 60s |
+| `rl:redirect:{ip}` | ZSET | Sliding-window rate limit for redirects (100 req/min) |
+| `rl:shorten:{key/ip}` | ZSET | Sliding-window rate limit for URL creation (30 req/min) |
 
-## Запуск тестов
+## Running Tests
 
 ```bash
-# Поднять PostgreSQL и Redis
+# Start PostgreSQL and Redis
 docker compose up -d postgres redis
 
-# Установить dev-зависимости
+# Install dev dependencies
 pip install -e ".[dev]"
 
-# Прогнать тесты
+# Run tests
 pytest -v
 ```
 
-## Нагрузочное тестирование (Locust)
+## Load Testing (Locust)
 
 ```bash
-# Поднять полный стек
+# Start full stack
 docker compose up -d postgres redis app prometheus grafana
 
-# Запустить Locust
+# Start Locust
 locust -f locustfile.py --host=http://localhost:8012 --users=500 --spawn-rate=50
 ```
 
-Веб-интерфейс Locust: `http://localhost:8089`
+Locust web UI: `http://localhost:8089`
 
-### Сценарии
+### Scenarios
 
-| Задача | Запрос | Вес |
-|--------|--------|-----|
+| Task | Request | Weight |
+|------|---------|--------|
 | CreateURL | `POST /api/v1/shorten` | 1 |
-| RedirectHot | `GET /{code}` — «горячие» коды (до 10 на пользователя) | 8 |
-| RedirectCold | `GET /{code}` — случайный или несуществующий код | 2 |
+| RedirectHot | `GET /{code}` — hot codes (up to 10 per user) | 8 |
+| RedirectCold | `GET /{code}` — random or non-existent code | 2 |
 | GetStats | `GET /api/v1/stats/{code}` | 1 |
 
-## Performance
+## License
 
-Заполните после прогона Locust:
-
-| Метрика | Значение |
-|---------|----------|
-| RPS (redirect) | — |
-| Latency p50 | — ms |
-| Latency p95 | — ms |
-| Latency p99 | — ms |
-| Cache hit ratio | — % |
-
-Скриншоты Grafana положите в [`docs/images/`](docs/images/) и раскомментируйте:
-
-<!--
-![Redirect RPS](docs/images/grafana-rps.png)
-![Latency p50/p95/p99](docs/images/grafana-latency.png)
-![Cache hit ratio](docs/images/grafana-cache-ratio.png)
-![Rate limit / min](docs/images/grafana-rate-limit.png)
-![Active URLs](docs/images/grafana-active-urls.png)
--->
-
-## Лицензия GeoLite2
-
-База **GeoLite2-City.mmdb** распространяется MaxMind по [отдельной лицензии](https://www.maxmind.com/en/geolite2/eula). Передайте `MAXMIND_LICENSE_KEY` при сборке Docker-образа или смонтируйте готовый файл через `MAXMIND_CITY_DB_PATH`.
+GeoLite2 database **GeoLite2-City.mmdb** is distributed by MaxMind under a [separate license](https://www.maxmind.com/en/geolite2/eula). Pass `MAXMIND_LICENSE_KEY` at Docker build time or mount the file via `MAXMIND_CITY_DB_PATH`.
