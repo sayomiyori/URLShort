@@ -63,11 +63,11 @@ services:
       args:
         MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
     ports:
-      - "8000:8000"
+      - "8012:8012"
     environment:
       DATABASE_URL: postgresql+asyncpg://urlshort:urlshort@postgres:5432/urlshort
       REDIS_URL: redis://redis:6379/0
-      PUBLIC_BASE_URL: http://localhost:8000
+      PUBLIC_BASE_URL: http://localhost:8012
       MAXMIND_CITY_DB_PATH: /usr/share/GeoIP/GeoLite2-City.mmdb
     depends_on:
       postgres:
@@ -76,4 +76,4 @@ services:
         condition: service_healthy
     command: >
       sh -c "alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      uvicorn app.main:app --host 0.0.0.0 --port 8012"

@@ -57,7 +57,7 @@ docker compose up -d
 
 // Ответ 200
 {
-  "short_url": "http://localhost:8000/my-link",
+  "short_url": "http://localhost:8012/my-link",
   "code": "my-link",
   "expires_at": "2025-03-22T12:00:00+00:00"
 }
@@ -157,7 +157,7 @@ pytest -v
 docker compose up -d postgres redis app prometheus grafana
 
 # Запустить Locust
-locust -f locustfile.py --host=http://localhost:8000 --users=500 --spawn-rate=50
+locust -f locustfile.py --host=http://localhost:8012 --users=500 --spawn-rate=50
 ```
 
 Веб-интерфейс Locust: `http://localhost:8089`

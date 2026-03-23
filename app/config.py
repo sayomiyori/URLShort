@@ -20,7 +20,7 @@ class Settings(BaseSettings):
         description="Sync URL for Alembic (postgresql+psycopg://...). Defaults from database_url.",
     )
     public_base_url: AnyUrl = Field(
-        default="http://localhost:8000",
+        default="http://localhost:8012",
         description="Origin used to build short_url in API responses",
     )
     redis_url: str = Field(
