@@ -1,6 +1,11 @@
 # URLShort
 
 [![CI](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/URLShort/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue)](#)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](#)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](#)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)](#)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](#)
 
 Высоконагруженный сокращатель ссылок на **FastAPI + PostgreSQL + Redis** с GeoIP-аналитикой, Nginx-кешированием, метриками Prometheus и дашбордом Grafana.
 
