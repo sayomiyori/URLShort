@@ -28,19 +28,25 @@ class URLShortUser(HttpUser):
     all_codes: list[str]
 
     def on_start(self) -> None:
-        """Pre-create URLs so redirect tasks have valid codes from the first task."""
+        """Pre-create a few URLs so redirect tasks have valid codes from the first task.
+        Uses catch_response so rate-limited (429) warm-up requests are not counted
+        as failures — they are expected when 500 users spawn simultaneously."""
         self.hot_codes = []
         self.all_codes = []
-        for _ in range(10):
-            resp = self.client.post(
+        for _ in range(3):
+            with self.client.post(
                 "/api/v1/shorten",
                 json={"url": f"https://warmup.example/{random.random()}"},
                 name="/api/v1/shorten",
-            )
-            if resp.status_code == 200:
-                code = resp.json()["code"]
-                self.hot_codes.append(code)
-                self.all_codes.append(code)
+                catch_response=True,
+            ) as resp:
+                if resp.status_code == 200:
+                    code = resp.json()["code"]
+                    self.hot_codes.append(code)
+                    self.all_codes.append(code)
+                    resp.success()
+                else:
+                    resp.success()  # 429 during warm-up is expected, not a failure
 
     # ------------------------------------------------------------------
     # Tasks
